@@ -1,32 +1,55 @@
-# 🛡️ AWS VPN Gateway Automation (StrongSwan IPsec + OpenVPN)
+# 🛡️ AWS VPN Failover & Disaster Recovery Gateway
 
-Solução automatizada de infraestrutura para provisionamento e configuração de **Gateway VPN Híbrido na AWS (EC2)**, combinando túneis Site-to-Site com **StrongSwan (IPsec)** e conexões para usuários remotos (Point-to-Site) via **OpenVPN**, acompanhada de script em Python para inicialização e conexão sob demanda.
+Solução de **Contingência e Disaster Recovery (DR)** para continuidade de negócios. Em caso de queda do roteador físico, falha de link ou indisponibilidade na infraestrutura on-premises da empresa, uma instância **AWS EC2** é ativada sob demanda para assumir a ponte dos túneis **IPsec (StrongSwan)** diretamente com os clientes/parceiros e fornecer acesso à equipe via **OpenVPN**, contornando 100% da falha física local com custo de computação quase zero em repouso.
 
 ---
 
-## 🚀 Funcionalidades
+## 🎯 O Problema e a Solução Proposta
 
-- **Gateway VPN Multi-Propósito:**
-  - 🏢 **Site-to-Site (IPsec / StrongSwan):** Conexão segura entre matriz, filiais e parceiros de negócio (múltiplas subnets configuráveis).
-  - 💻 **Point-to-Site (SSL VPN / OpenVPN):** Acesso remoto criptografado para desenvolvedores e colaboradores em home office.
-- **Automação Local Sob Demanda (`script-inicia-ec2-vpn.py`):**
-  - Script em Python que se comunica com a AWS CLI para ligar a instância EC2 apenas quando for utilizada (economia de custos).
-  - Captura automaticamente o IP público alocado dinamicamente pela AWS.
-  - Inicia uma sessão SSH interativa direta no seu terminal.
-- **Firewall & Roteamento Automatizados:**
-  - Ativação de `ip_forwarding` no Kernel Linux.
-  - Regras de `iptables` para MASQUERADE/NAT entre as subnets dos clientes e a rede interna da AWS.
-- **Infraestrutura PKI Embutida:** Geração automática da autoridade certificadora (CA) e perfis de clientes `.ovpn` para OpenVPN.
+### ❌ O Cenário de Falha (Disaster Recovery)
+Quando a sede da empresa sofre uma queda física (pane elétrica, queima de hardware do roteador de borda ou interrupção de link de internet), a comunicação direta via túneis IPsec entre a empresa e seus múltiplos clientes é interrompida, paralisando serviços críticos.
+
+### ✅ A Solução Implementada
+1. **EC2 Standby (Custo Quase Zero):** Uma instância EC2 na AWS é pré-configurada e mantida **desligada**, gerando custo apenas de armazenamento do disco EBS.
+2. **Ativação Imediata via Script Local (`script-inicia-ec2-vpn.py`):** Ao detectar a queda on-premises, o operador executa o script no computador local (notebook/contingência com 4G/rede externa). O script comunica-se via AWS CLI, liga a EC2 em segundos, captura o IP público alocado e já abre o túnel administrativo SSH.
+3. **Ponte Direta com Clientes (StrongSwan IPsec):** A EC2 assume a terminação dos túneis IPsec com seu IP público e reestabelece as conexões criptografadas com cada um dos clientes/parceiros sem depender de nenhum equipamento físico da empresa.
+4. **Acesso dos Operadores (OpenVPN):** A equipe remota conecta-se à EC2 via OpenVPN (SSL) e passa a alcançar os ambientes dos clientes normalmente.
+
+---
+
+## 🌐 Arquitetura do Failover
+
+```mermaid
+flowchart TD
+    subgraph OnPremises["❌ Falha Física On-Premises"]
+        Empresa["Roteador / Link da Empresa (OFFLINE)"]
+    end
+
+    subgraph AWSCloud["☁️ AWS - Gateway de Contingência (EC2)"]
+        Script["script-inicia-ec2-vpn.py<br/>(Acionamento Sob Demanda)"] -->|Liga Instância| EC2["EC2 Gateway VPN<br/>(Ubuntu + StrongSwan + OpenVPN)"]
+    end
+
+    subgraph Operadores["👥 Equipe / Operadores"]
+        User["Colaboradores Remotos"] -->|OpenVPN SSL / 10.8.0.0/24| EC2
+    end
+
+    subgraph Clientes["🏢 Redes dos Clientes (Túneis IPsec)"]
+        EC2 -->|IPsec Site-to-Site| C1["Cliente 1 (192.168.1.0/24)"]
+        EC2 -->|IPsec Site-to-Site| C2["Cliente 2 (172.16.1.0/24)"]
+        EC2 -->|IPsec Site-to-Site| C3["Cliente 3 (172.20.1.0/24)"]
+        EC2 -->|IPsec Site-to-Site| Cn["Demais Clientes..."]
+    end
+```
 
 ---
 
 ## 🛠️ Tecnologias e Protocolos
 
 - **Cloud Provider:** Amazon Web Services (AWS EC2 - Ubuntu 20.04/22.04+)
-- **IPsec Daemon:** StrongSwan
-- **SSL VPN:** OpenVPN Server + Easy-RSA
-- **Linguagens de Automação:** Bash (Shell Script) & Python 3 (Boto3/Subprocess com AWS CLI)
-- **Criptografia:** AES-256 (OpenVPN) / AES-128 (IPsec), HMAC-SHA256, DH Group 14
+- **Túneis com Clientes (Site-to-Site):** StrongSwan (IPsec IKEv1/IKEv2, ESP, AES-128/SHA256, PSK)
+- **Acesso da Equipe (Point-to-Site):** OpenVPN Server (SSL/TLS PKI, AES-256)
+- **Automação de Acionamento:** Python 3 (AWS CLI / Subprocess)
+- **Automação do Gateway:** Shell Script (Bash + iptables NAT/Forwarding)
 
 ---
 
@@ -34,137 +57,95 @@ Solução automatizada de infraestrutura para provisionamento e configuração d
 
 ```text
 aws-vpn-gateway-automation/
-├── vpn-strongswan-aws-generic.sh  # Script shell executado na EC2 para instalar e configurar toda a VPN
-├── script-inicia-ec2-vpn.py       # Script Python para ligar a EC2 via AWS CLI e abrir SSH localmente
-├── .gitignore                    # Proteção contra commit acidental de chaves .pem, .ovpn ou segredos
-└── README.md                     # Documentação completa do projeto
+├── script-inicia-ec2-vpn.py       # Script local que liga a EC2 via AWS CLI e conecta via SSH
+├── vpn-strongswan-aws-generic.sh  # Provisionamento e configuração dos túneis IPsec e OpenVPN na EC2
+├── .gitignore                    # Proteção contra commit de chaves .pem, .secrets e .ovpn
+└── README.md                     # Documentação de arquitetura e contingência
 ```
 
 ---
 
-## 🌐 Topologia de Rede do Gateway
+## ⚙️ Procedimento Operacional de Contingência (Passo a Passo)
 
-```text
-                 ┌────────────────────────────────┐
-                 │       Internet / Clientes      │
-                 └──────────────┬─────────────────┘
-                                │
-               [ AWS EC2 VPN Gateway (Ubuntu) ]
-                                │
-   ┌────────────────────────────┼────────────────────────────┐
-   │                            │                            │
-[Site-to-Site IPsec]    [Site-to-Site IPsec]       [OpenVPN Road Warrior]
-   │                            │                            │
-Filial 1: 192.168.1.0/24    Filial 2: 172.16.1.0/24     Usuários: 10.8.0.0/24
-```
-
----
-
-## ⚙️ Pré-requisitos na AWS
-
-1. **Instância EC2:** Ubuntu Server com IP Público (ou Elastic IP associado).
-2. **Security Group:**
-   - `UDP 500` (IKE IPsec)
-   - `UDP 4500` (IPsec NAT-Traversal)
-   - `UDP 1194` (OpenVPN Server)
-   - `TCP 22` (Acesso administrativo SSH)
-3. **Source/Destination Check:** **Desabilitado** na placa de rede da instância EC2 (obrigatório para instâncias que atuam como roteador/gateway).
-4. **AWS Route Tables:** Rota na VPC direcionando o tráfego das subnets locais dos clientes para o Network Interface ID da EC2 da VPN.
-
----
-
-## 🚀 Como Instalar e Configurar o Gateway
-
-### 1. No Servidor AWS EC2
-
-Conecte-se na sua instância EC2 e execute o script de provisionamento:
+### 🚨 1. Acionamento em Caso de Falha
+Caso o roteador da empresa caia, qualquer operador autorizado executa o script no terminal local:
 
 ```bash
-# Baixar o script de instalacao
-wget https://raw.githubusercontent.com/igorpaiva26/aws-vpn-gateway-automation/main/vpn-strongswan-aws-generic.sh
+python script-inicia-ec2-vpn.py
+```
 
-# Conceder permissao de execucao
+**O que acontece:**
+1. A AWS CLI envia o comando `ec2 start-instances` para a VM de contingência.
+2. O script aguarda a inicialização e obtém o IP público da instância.
+3. Uma sessão SSH interativa é estabelecida imediatamente no terminal.
+
+---
+
+### 🚀 2. Instalação e Preparação da VM (Setup Inicial)
+
+Caso esteja configurando uma nova instância de contingência na AWS:
+
+```bash
+# 1. Conecte-se na EC2 e baixe o script de provisionamento
+wget https://raw.githubusercontent.com/igorpaiva26/aws-vpn-gateway-automation/main/vpn-strongswan-aws-generic.sh
 chmod +x vpn-strongswan-aws-generic.sh
 
-# Executar como root
+# 2. Execute a instalação como root
 sudo ./vpn-strongswan-aws-generic.sh
 ```
 
+O script realiza:
+- Instalação e configuração do StrongSwan e OpenVPN.
+- Ativação do roteamento de pacotes no Kernel (`net.ipv4.ip_forward=1`).
+- Configuração das regras de firewall iptables (MASQUERADE entre as subnets dos clientes e a VPN).
+- Criação da PKI e perfis de clientes OpenVPN em `/root/client-configs/`.
+
 ---
 
-### 2. Personalização das Configurações de Segurança
+### 🔧 3. Ajuste dos Clientes e Chaves Secretas
 
-⚠️ **Importante:** O script utiliza dados genéricos de demonstração. Você deve substituir pelos dados reais do seu ambiente:
+No arquivo `/etc/ipsec.conf` e `/etc/ipsec.secrets`:
+- **Chaves PSK:** Configure a chave pré-compartilhada combinada com cada cliente em `/etc/ipsec.secrets`.
+- **IPs e Subnets dos Clientes:** Atualize os endereços dos roteadores remotos de cada cliente (`right=IP_DO_CLIENTE`) e as subnets correspondentes (`rightsubnet=REDE_DO_CLIENTE/24`).
 
-#### A. Chaves Pré-Compartilhadas (PSK) do IPsec
-Edite o arquivo `/etc/ipsec.secrets`:
-```text
-"SUA_CHAVE_SECRETA_FORTE_AQUI"
-```
-
-#### B. IPs Públicos e Redes Locais das Filiais
-Edite o arquivo `/etc/ipsec.conf` e configure os blocos de cada filial:
-- Substitua os IPs dos gateways remotos (`right=203.0.113.x`).
-- Substitua as subnets remotas (`rightsubnet=192.168.x.x/24`).
-
-Reinicie o StrongSwan:
+Reinicie o serviço para subir os túneis:
 ```bash
 sudo systemctl restart strongswan-starter
 ```
 
-#### C. Distribuição de Perfis OpenVPN
-Os arquivos de configuração dos clientes remotos (`.ovpn`) com certificados embutidos são gerados no diretório:
-```bash
-/root/client-configs/
-```
-Copie com segurança os arquivos `.ovpn` para os usuários finais utilizarem no cliente OpenVPN Connect.
+---
+
+## 📋 Pré-requisitos de Infraestrutura na AWS
+
+1. **Security Group da EC2:**
+   - `UDP 500` (IKE IPsec)
+   - `UDP 4500` (IPsec NAT-Traversal)
+   - `UDP 1194` (OpenVPN)
+   - `TCP 22` (SSH administrativo)
+2. **Source/Destination Check:** Deve ser **desabilitado** na interface de rede da EC2 para permitir tráfego de roteador/gateway.
 
 ---
 
-## 💻 Automação Local (Iniciar EC2 Sob Demanda)
+## 🔍 Comandos de Validação e Status
 
-No seu computador local (Windows ou Linux), você pode usar o script **`script-inicia-ec2-vpn.py`** para evitar custos desnecessários mantendo a EC2 ligada 24/7:
+Com a EC2 ativa durante o failover, utilize os comandos abaixo para validar a saúde dos túneis:
 
-1. Configure a [AWS CLI](https://aws.amazon.com/cli/) com `aws configure`.
-2. Edite as variáveis no início do script `script-inicia-ec2-vpn.py`:
-   ```python
-   INSTANCE_ID = "i-0123456789abcdef0"
-   KEY_PATH = r"C:\Users\seu-usuario\.ssh\sua-chave.pem"
-   SSH_USER = "ubuntu"
-   REGION = "us-east-1"
-   ```
-3. Execute o script:
-   ```bash
-   python script-inicia-ec2-vpn.py
-   ```
-4. O script iniciará a instância na AWS, aguardará a prontidão, detectará o novo IP público alocado e abrirá a sessão SSH automaticamente.
-
----
-
-## 🔍 Troubleshooting e Diagnóstico
-
-### Checar Status dos Serviços:
 ```bash
-# Status do StrongSwan (IPsec)
+# Checar status e conexões ativas do IPsec com os clientes
 sudo ipsec status
+sudo ipsec statusall
+
+# Checar status dos serviços
 sudo systemctl status strongswan-starter
-
-# Status do OpenVPN
 sudo systemctl status openvpn-server@server
-cat /var/log/openvpn/openvpn-status.log
-```
 
-### Acompanhar Logs em Tempo Real:
-```bash
-# Logs do IPsec
+# Acompanhar logs de negociação do túnel IPsec
 sudo journalctl -u strongswan-starter -f
-
-# Logs do OpenVPN
-sudo tail -f /var/log/openvpn/openvpn.log
 ```
 
 ---
 
 ## 👤 Autor
 
-Desenvolvido por **[Igor Paiva](https://github.com/igorpaiva26)**.
+Desenvolvido por **[Igor Paiva](https://github.com/igorpaiva26)**.  
+*Arquitetura de resiliência e continuidade de negócios focada em contingência de conectividade corporativa.*
