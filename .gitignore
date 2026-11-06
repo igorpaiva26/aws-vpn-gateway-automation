@@ -1,0 +1,19 @@
+# Chaves e certificados de seguranca
+*.pem
+*.key
+*.crt
+*.ovpn
+*.secrets
+secrets/
+client-configs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Logs locais
+*.log
+
+# IDEs
+.vscode/
+.idea/

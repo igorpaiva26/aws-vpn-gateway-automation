@@ -1,115 +1,170 @@
-# VPN Gateway - StrongSwan + OpenVPN
+# 🛡️ AWS VPN Gateway Automation (StrongSwan IPsec + OpenVPN)
 
-Script automatizado para configuração de gateway VPN combinando StrongSwan (IPsec) e OpenVPN em ambiente AWS.
+Solução automatizada de infraestrutura para provisionamento e configuração de **Gateway VPN Híbrido na AWS (EC2)**, combinando túneis Site-to-Site com **StrongSwan (IPsec)** e conexões para usuários remotos (Point-to-Site) via **OpenVPN**, acompanhada de script em Python para inicialização e conexão sob demanda.
 
-## ⚠️ IMPORTANTE - CONFIGURAÇÃO ANTES DO USO
+---
 
-**ESTE SCRIPT CONTÉM DADOS GENÉRICOS. VOCÊ DEVE PERSONALIZAR ANTES DE USAR:**
+## 🚀 Funcionalidades
 
-### 1. Alterar Chave PSK
-Edite `/etc/ipsec.secrets` após a instalação e substitua:
+- **Gateway VPN Multi-Propósito:**
+  - 🏢 **Site-to-Site (IPsec / StrongSwan):** Conexão segura entre matriz, filiais e parceiros de negócio (múltiplas subnets configuráveis).
+  - 💻 **Point-to-Site (SSL VPN / OpenVPN):** Acesso remoto criptografado para desenvolvedores e colaboradores em home office.
+- **Automação Local Sob Demanda (`script-inicia-ec2-vpn.py`):**
+  - Script em Python que se comunica com a AWS CLI para ligar a instância EC2 apenas quando for utilizada (economia de custos).
+  - Captura automaticamente o IP público alocado dinamicamente pela AWS.
+  - Inicia uma sessão SSH interativa direta no seu terminal.
+- **Firewall & Roteamento Automatizados:**
+  - Ativação de `ip_forwarding` no Kernel Linux.
+  - Regras de `iptables` para MASQUERADE/NAT entre as subnets dos clientes e a rede interna da AWS.
+- **Infraestrutura PKI Embutida:** Geração automática da autoridade certificadora (CA) e perfis de clientes `.ovpn` para OpenVPN.
+
+---
+
+## 🛠️ Tecnologias e Protocolos
+
+- **Cloud Provider:** Amazon Web Services (AWS EC2 - Ubuntu 20.04/22.04+)
+- **IPsec Daemon:** StrongSwan
+- **SSL VPN:** OpenVPN Server + Easy-RSA
+- **Linguagens de Automação:** Bash (Shell Script) & Python 3 (Boto3/Subprocess com AWS CLI)
+- **Criptografia:** AES-256 (OpenVPN) / AES-128 (IPsec), HMAC-SHA256, DH Group 14
+
+---
+
+## 📂 Estrutura do Repositório
+
+```text
+aws-vpn-gateway-automation/
+├── vpn-strongswan-aws-generic.sh  # Script shell executado na EC2 para instalar e configurar toda a VPN
+├── script-inicia-ec2-vpn.py       # Script Python para ligar a EC2 via AWS CLI e abrir SSH localmente
+├── .gitignore                    # Proteção contra commit acidental de chaves .pem, .ovpn ou segredos
+└── README.md                     # Documentação completa do projeto
 ```
-"ALTERE_ESTA_CHAVE_SECRETA_123"
+
+---
+
+## 🌐 Topologia de Rede do Gateway
+
+```text
+                 ┌────────────────────────────────┐
+                 │       Internet / Clientes      │
+                 └──────────────┬─────────────────┘
+                                │
+               [ AWS EC2 VPN Gateway (Ubuntu) ]
+                                │
+   ┌────────────────────────────┼────────────────────────────┐
+   │                            │                            │
+[Site-to-Site IPsec]    [Site-to-Site IPsec]       [OpenVPN Road Warrior]
+   │                            │                            │
+Filial 1: 192.168.1.0/24    Filial 2: 172.16.1.0/24     Usuários: 10.8.0.0/24
 ```
-Por uma chave forte e única.
 
-### 2. Configurar IPs dos Clientes
-Edite `/etc/ipsec.conf` e substitua os IPs genéricos pelos reais:
-- `203.0.113.10` → IP real do cliente1
-- `203.0.113.20` → IP real do cliente2
-- etc.
+---
 
-### 3. Configurar Redes dos Clientes
-Ajuste as subnets conforme sua topologia:
-- `192.168.1.0/24` → Rede real do cliente1
-- `172.16.1.0/24` → Rede real do cliente2
-- etc.
+## ⚙️ Pré-requisitos na AWS
 
-## 🚀 Instalação
+1. **Instância EC2:** Ubuntu Server com IP Público (ou Elastic IP associado).
+2. **Security Group:**
+   - `UDP 500` (IKE IPsec)
+   - `UDP 4500` (IPsec NAT-Traversal)
+   - `UDP 1194` (OpenVPN Server)
+   - `TCP 22` (Acesso administrativo SSH)
+3. **Source/Destination Check:** **Desabilitado** na placa de rede da instância EC2 (obrigatório para instâncias que atuam como roteador/gateway).
+4. **AWS Route Tables:** Rota na VPC direcionando o tráfego das subnets locais dos clientes para o Network Interface ID da EC2 da VPN.
+
+---
+
+## 🚀 Como Instalar e Configurar o Gateway
+
+### 1. No Servidor AWS EC2
+
+Conecte-se na sua instância EC2 e execute o script de provisionamento:
 
 ```bash
-# Baixar o script
-wget https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/vpn-strongswan-aws-generic.sh
+# Baixar o script de instalacao
+wget https://raw.githubusercontent.com/igorpaiva26/aws-vpn-gateway-automation/main/vpn-strongswan-aws-generic.sh
 
-# Dar permissão de execução
+# Conceder permissao de execucao
 chmod +x vpn-strongswan-aws-generic.sh
 
 # Executar como root
 sudo ./vpn-strongswan-aws-generic.sh
 ```
 
-## 📋 Pré-requisitos AWS
+---
 
-1. **EC2 Instance**: Ubuntu 20.04+ com IP público
-2. **Security Group**: Liberar portas 500, 4500, 1194/UDP
-3. **Source/Destination Check**: Desabilitar na instância EC2
-4. **IAM**: Permissões para modificar route tables (se necessário)
+### 2. Personalização das Configurações de Segurança
 
-## 🔧 Configuração Pós-Instalação
+⚠️ **Importante:** O script utiliza dados genéricos de demonstração. Você deve substituir pelos dados reais do seu ambiente:
 
-### StrongSwan (IPsec)
-1. Editar `/etc/ipsec.conf` com IPs reais
-2. Editar `/etc/ipsec.secrets` com chaves reais
-3. Reiniciar: `systemctl restart strongswan-starter`
-
-### OpenVPN
-- Certificados gerados em: `/root/client-configs/`
-- Distribuir arquivos `.ovpn` para usuários
-
-## 🌐 Topologia de Rede
-
-```
-Internet
-    |
-[AWS VPN Gateway]
-    |
-├── StrongSwan (IPsec) ── Cliente1 (192.168.1.0/24)
-├── StrongSwan (IPsec) ── Cliente2 (172.16.1.0/24)
-├── StrongSwan (IPsec) ── Cliente3 (172.20.1.0/24)
-├── StrongSwan (IPsec) ── Cliente4 (172.24.1.0/24)
-├── StrongSwan (IPsec) ── Cliente5 (10.10.1.0/24)
-├── StrongSwan (IPsec) ── Cliente6 (10.20.1.0/24)
-└── OpenVPN (SSL) ────── Usuários remotos (10.8.0.0/24)
+#### A. Chaves Pré-Compartilhadas (PSK) do IPsec
+Edite o arquivo `/etc/ipsec.secrets`:
+```text
+"SUA_CHAVE_SECRETA_FORTE_AQUI"
 ```
 
-## 🔍 Troubleshooting
+#### B. IPs Públicos e Redes Locais das Filiais
+Edite o arquivo `/etc/ipsec.conf` e configure os blocos de cada filial:
+- Substitua os IPs dos gateways remotos (`right=203.0.113.x`).
+- Substitua as subnets remotas (`rightsubnet=192.168.x.x/24`).
 
-### Verificar Status
+Reinicie o StrongSwan:
 ```bash
-systemctl status strongswan-starter
-systemctl status openvpn-server@server
+sudo systemctl restart strongswan-starter
 ```
 
-### Logs
+#### C. Distribuição de Perfis OpenVPN
+Os arquivos de configuração dos clientes remotos (`.ovpn`) com certificados embutidos são gerados no diretório:
 ```bash
-# StrongSwan
-journalctl -u strongswan-starter -f
-
-# OpenVPN
-tail -f /var/log/openvpn/openvpn.log
+/root/client-configs/
 ```
+Copie com segurança os arquivos `.ovpn` para os usuários finais utilizarem no cliente OpenVPN Connect.
 
-### Testar Conectividade
+---
+
+## 💻 Automação Local (Iniciar EC2 Sob Demanda)
+
+No seu computador local (Windows ou Linux), você pode usar o script **`script-inicia-ec2-vpn.py`** para evitar custos desnecessários mantendo a EC2 ligada 24/7:
+
+1. Configure a [AWS CLI](https://aws.amazon.com/cli/) com `aws configure`.
+2. Edite as variáveis no início do script `script-inicia-ec2-vpn.py`:
+   ```python
+   INSTANCE_ID = "i-0123456789abcdef0"
+   KEY_PATH = r"C:\Users\seu-usuario\.ssh\sua-chave.pem"
+   SSH_USER = "ubuntu"
+   REGION = "us-east-1"
+   ```
+3. Execute o script:
+   ```bash
+   python script-inicia-ec2-vpn.py
+   ```
+4. O script iniciará a instância na AWS, aguardará a prontidão, detectará o novo IP público alocado e abrirá a sessão SSH automaticamente.
+
+---
+
+## 🔍 Troubleshooting e Diagnóstico
+
+### Checar Status dos Serviços:
 ```bash
-# Verificar túneis IPsec
-ipsec status
+# Status do StrongSwan (IPsec)
+sudo ipsec status
+sudo systemctl status strongswan-starter
 
-# Verificar clientes OpenVPN
+# Status do OpenVPN
+sudo systemctl status openvpn-server@server
 cat /var/log/openvpn/openvpn-status.log
 ```
 
-## 🛡️ Segurança
+### Acompanhar Logs em Tempo Real:
+```bash
+# Logs do IPsec
+sudo journalctl -u strongswan-starter -f
 
-- ✅ Criptografia AES-256 (OpenVPN) e AES-128 (IPsec)
-- ✅ Autenticação SHA-256
-- ✅ Certificados PKI para OpenVPN
-- ✅ Chaves pré-compartilhadas para IPsec
-- ✅ Firewall configurado automaticamente
+# Logs do OpenVPN
+sudo tail -f /var/log/openvpn/openvpn.log
+```
 
-## 📝 Licença
+---
 
-MIT License - Use livremente, mas por sua conta e risco.
+## 👤 Autor
 
-## ⚠️ Disclaimer
-
-Este script é fornecido "como está". Teste em ambiente de desenvolvimento antes de usar em produção.
+Desenvolvido por **[Igor Paiva](https://github.com/igorpaiva26)**.
